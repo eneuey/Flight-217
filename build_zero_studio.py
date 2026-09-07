@@ -6,13 +6,15 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
-from sklearn.metrics import accuracy_score, confusion_matrix
+from matplotlib.lines import Line2D
+from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier, export_text
 
 
 DATA = Path(__file__).with_name("flight217_build_zero.csv")
 FIGURE = Path(__file__).with_name("build_zero_scatter.png")
+CONFUSION_FIGURE = Path(__file__).with_name("build_zero_confusion_matrix.png")
 flights = pd.read_csv(DATA)
 
 print("Shape:", flights.shape)
@@ -37,16 +39,19 @@ axis.axhline(30, color="black", linestyle="--", linewidth=1)
 axis.set_title("Synthetic Aster 217 service days")
 axis.set_xlabel("Estimated route headwind (knots)")
 axis.set_ylabel("Gate-arrival delay (minutes)")
+axis.legend(
+    handles=[
+        Line2D([], [], marker="o", color="w", label="Not late (< 30 min)",
+               markerfacecolor="#4C78A8", markersize=7),
+        Line2D([], [], marker="o", color="w", label="Late (>= 30 min)",
+               markerfacecolor="#E45756", markersize=7),
+    ],
+    title="Gate-arrival outcome",
+)
 axis.figure.tight_layout()
 axis.figure.savefig(FIGURE, dpi=160)
 plt.close(axis.figure)
 print(f"\nSaved {FIGURE.name}")
-
-# %% Establish a baseline
-majority_class = int(flights["late_30"].mode().iloc[0])
-baseline_accuracy = float((flights["late_30"] == majority_class).mean())
-print(f"\nMajority class: {majority_class}")
-print(f"Baseline accuracy: {baseline_accuracy:.3f}")
 
 # %% Define a provisional predictive task
 features = [
@@ -66,14 +71,41 @@ X_train, X_test, y_train, y_test = train_test_split(
     stratify=y,
 )
 
+# %% Establish a held-out baseline
+# Choose the majority class using training labels only, then evaluate it on the
+# same held-out rows used for the tree.
+majority_class = int(y_train.mode().iloc[0])
+baseline_predictions = [majority_class] * len(y_test)
+baseline_accuracy = accuracy_score(y_test, baseline_predictions)
+print(f"\nHeld-out majority class: {majority_class}")
+print(f"Held-out majority baseline accuracy: {baseline_accuracy:.3f}")
+
 # %% Fit an inspectable model
 tree = DecisionTreeClassifier(max_depth=4, random_state=217)
 tree.fit(X_train, y_train)
 predictions = tree.predict(X_test)
+tree_accuracy = accuracy_score(y_test, predictions)
+counts = confusion_matrix(y_test, predictions, labels=[0, 1])
 
-print(f"\nTree accuracy: {accuracy_score(y_test, predictions):.3f}")
+print(f"\nTree accuracy: {tree_accuracy:.3f}")
+print(f"Tree improvement over held-out baseline: {tree_accuracy - baseline_accuracy:.3f}")
 print("Confusion matrix [[TN, FP], [FN, TP]]:")
-print(confusion_matrix(y_test, predictions))
+print(counts)
+
+# %% Agent-requested bounded change: readable count-based confusion matrix
+display = ConfusionMatrixDisplay(
+    confusion_matrix=counts,
+    display_labels=["Not late (< 30 min)", "Late (>= 30 min)"],
+)
+display.plot(cmap="Blues", values_format="d")
+display.ax_.set_title("Held-out synthetic Aster 217 classifications")
+display.ax_.set_xlabel("Predicted class")
+display.ax_.set_ylabel("Actual class")
+display.figure_.tight_layout()
+display.figure_.savefig(CONFUSION_FIGURE, dpi=160)
+plt.close(display.figure_)
+print(f"Saved {CONFUSION_FIGURE.name}")
+
 print("\nLearned rules:")
 print(export_text(tree, feature_names=features))
 
